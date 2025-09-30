@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Headers.Companion.toHeaders
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
 
@@ -42,7 +44,8 @@ class VoeExtractor(private val client: OkHttpClient) {
 
         if (m3u8 != null) {
             playlistUtils.extractFromHls(m3u8,
-                videoNameGen = { quality -> "${prefix}Voe:$quality" }
+                videoNameGen = { quality -> "${prefix}Voe:$quality" },
+                masterHeadersGen = { _, _ -> mapOf("Origin" to "https://${url.toHttpUrl().host}/").toHeaders() },
             ).let { videoList.addAll(it) }
         }
         if (mp4 != null) {

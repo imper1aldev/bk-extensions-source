@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.util.parallelCatchingFlatMapBlocking
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -68,7 +69,7 @@ class AnimeAv1 : ConfigurableAnimeSource, AnimeHttpSource() {
             title = doc.selectFirst("h1.line-clamp-2")?.text()?.trim() ?: ""
             description = doc.selectFirst(".entry > p")?.text()
             genre = doc.select("header > .items-center > a").joinToString { it.text() }
-            thumbnail_url = doc.selectFirst("img.object-cover")?.attr("src")
+            thumbnail_url = doc.selectFirst("img.object-cover")?.getImageUrl()
         }
         doc.select("header > .items-center.text-sm span").eachText().forEach {
             when {
@@ -89,7 +90,7 @@ class AnimeAv1 : ConfigurableAnimeSource, AnimeHttpSource() {
             SAnime.create().apply {
                 setUrlWithoutDomain(element.selectFirst("a")?.attr("abs:href").orEmpty())
                 title = element.select("header h3").text()
-                thumbnail_url = element.selectFirst(".bg-current img")?.attr("abs:src")
+                thumbnail_url = element.selectFirst(".bg-current img")?.getImageUrl()
             }
         }
         return AnimesPage(animeList, nextPage)
@@ -257,5 +258,20 @@ class AnimeAv1 : ConfigurableAnimeSource, AnimeHttpSource() {
                 preferences.edit().putString(key, entry).commit()
             }
         }.also(screen::addPreference)
+    }
+
+    private fun Element.getImageUrl(): String? {
+        return when {
+            isValidUrl("data-src") -> attr("abs:data-src")
+            isValidUrl("data-lazy-src") -> attr("abs:data-lazy-src")
+            isValidUrl("srcset") -> attr("abs:srcset").substringBefore(" ")
+            isValidUrl("src") -> attr("abs:src")
+            else -> ""
+        }
+    }
+
+    private fun Element.isValidUrl(attrName: String): Boolean {
+        if (!hasAttr(attrName)) return false
+        return !attr(attrName).contains("data:image/")
     }
 }
