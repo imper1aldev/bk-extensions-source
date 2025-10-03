@@ -31,11 +31,17 @@ import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.lib.youruploadextractor.YourUploadExtractor
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.Headers.Companion.toHeaders
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -125,20 +131,43 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
             val apiResponse = client.newCall(GET(opt)).execute()
             if (apiResponse.isSuccessful) {
                 val docResponse = apiResponse.asJsoup()
-                val cryptoScript = docResponse.selectFirst("script:containsData(const dataLink)")?.data()
+                val cryptoScript = docResponse.selectFirst("script:containsData(dataLink =)")?.data()
                 if (!cryptoScript.isNullOrBlank()) {
-                    val jsLinksMatch = cryptoScript.substringAfter("const dataLink =").substringBefore("];") + "]"
+                    val apiDecryption = cryptoScript.contains("fetch('/api/decrypt'")
+                    val jsLinksMatch = cryptoScript.substringAfter("dataLink =").substringBefore("];") + "]"
                     val decryptUtf8 = cryptoScript.contains("decryptLink(encrypted){")
                     var key = cryptoScript.substringAfter("CryptoJS.AES.decrypt(encrypted, '").substringBefore("')")
                     if (!decryptUtf8) {
                         key = cryptoScript.substringAfter("decryptLink(server.link, '").substringBefore("'),")
                     }
                     json.decodeFromString<List<DataLinkDto>>(jsLinksMatch).flatMap { embed ->
-                        embed.sortedEmbeds.map { item ->
-                            val link = CryptoAES.decryptCbcIV(item?.link ?: "", key, decryptUtf8) ?: ""
-                            val lng = embed.videoLanguage ?: ""
-                            val server = item?.servername ?: ""
-                            (server to lng) to link
+                        val lng = embed.videoLanguage ?: ""
+                        if (apiDecryption) {
+                            val arrLinksEncrypted = json.encodeToString(embed.sortedEmbeds.mapNotNull { it?.link.orEmpty() })
+                            val mediaType = "application/json".toMediaType()
+                            val body = "{\"links\":$arrLinksEncrypted}".toRequestBody(mediaType)
+                            val decryptResponse = client.newCall(
+                                POST(
+                                    "https://${opt.toHttpUrl().host}/api/decrypt",
+                                    body = body,
+                                    headers = mapOf(
+                                        "Referer" to opt,
+                                        "origin" to "https://${opt.toHttpUrl().host}",
+                                        "Content-Type" to "application/json",
+                                    ).toHeaders(),
+                                ),
+                            ).execute()
+
+                            json.decodeFromString<DecryptResponse>(decryptResponse.body.string()).links.mapIndexed { idx, it ->
+                                val serverName = runCatching { embed.sortedEmbeds[idx]?.servername }.getOrNull().orEmpty()
+                                (serverName to lng) to it.link.orEmpty()
+                            }
+                        } else {
+                            embed.sortedEmbeds.map { item ->
+                                val link = CryptoAES.decryptCbcIV(item?.link ?: "", key, decryptUtf8) ?: ""
+                                val server = item?.servername ?: ""
+                                (server to lng) to link
+                            }
                         }
                     }.flatMap {
                         runCatching {
@@ -244,7 +273,7 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
         "amazon" to listOf("amazon", "amz"),
         "uqload" to listOf("uqload"),
         "mp4upload" to listOf("mp4upload"),
-        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg"),
+        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg", "hglink"),
         "doodstream" to listOf("doodstream", "dood.", "ds2play", "doods.", "ds2play", "ds2video", "dooood", "d000d", "d0000d"),
         "streamlare" to listOf("streamlare", "slmaxed"),
         "yourupload" to listOf("yourupload", "upload"),
@@ -253,7 +282,7 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
         "upstream" to listOf("upstream"),
         "streamsilk" to listOf("streamsilk"),
         "streamtape" to listOf("streamtape", "stp", "stape", "shavetape"),
-        "vidhide" to listOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide", "kinoger", "smoothpre", "dhtpre", "peytonepre", "earnvids", "ryderjet"),
+        "vidhide" to listOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide", "kinoger", "smoothpre", "dhtpre", "peytonepre", "earnvids", "ryderjet", "mivalyo"),
         "vidguard" to listOf("vembed", "guard", "listeamed", "bembed", "vgfplay", "bembed"),
     )
 
@@ -378,6 +407,19 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
             Regex("""(https?://(www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=]*))""")
         return linkRegex.findAll(text).map { it.value.trim().removeSurrounding("\"") }.toList()
     }
+
+    @Serializable
+    data class DecryptResponse(
+        @SerialName("success") var success: Boolean? = null,
+        @SerialName("links") var links: ArrayList<Links> = arrayListOf(),
+    )
+
+    @Serializable
+    data class Links(
+        @SerialName("index") var index: Int? = null,
+        @SerialName("link") var link: String? = null,
+        @SerialName("error") var error: String? = null,
+    )
 
     @Serializable
     data class DataLinkDto(
