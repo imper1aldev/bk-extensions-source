@@ -264,6 +264,7 @@ class AnimeAv1 : ConfigurableAnimeSource, AnimeHttpSource() {
         return when {
             isValidUrl("data-src") -> attr("abs:data-src")
             isValidUrl("data-lazy-src") -> attr("abs:data-lazy-src")
+            isValidUrl("data-cfsrc") -> attr("abs:data-cfsrc")
             isValidUrl("srcset") -> attr("abs:srcset").substringBefore(" ")
             isValidUrl("src") -> attr("abs:src")
             else -> ""
