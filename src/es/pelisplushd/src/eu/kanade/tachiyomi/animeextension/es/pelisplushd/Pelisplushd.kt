@@ -89,7 +89,7 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
         return SAnime.create().apply {
             setUrlWithoutDomain(element.select("a").attr("abs:href"))
             title = element.select("a div.listing-content p").text()
-            thumbnail_url = element.select("a img").attr("src").replace("/w154/", "/w200/")
+            thumbnail_url = element.selectFirst("img")?.getImageUrl()?.replace("/w154/", "/w200/")
         }
     }
 
@@ -304,8 +304,6 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
         ).reversed()
     }
 
-    fun getNumberFromString(epsStr: String) = epsStr.filter { it.isDigit() }.ifEmpty { "0" }
-
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val filterList = if (filters.isEmpty()) getFilterList() else filters
         val genreFilter = filterList.find { it is GenreFilter } as GenreFilter
@@ -327,11 +325,10 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
             title = document.selectFirst("h1.m-b-5")!!.text()
-            thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")!!
-                .attr("src").replace("/w154/", "/w500/")
+            thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")?.getImageUrl()?.replace("/w154/", "/w500/")
             description = document.selectFirst("div.col-sm-4 div.text-large")!!.ownText()
             genre = document.select("div.p-v-20.p-h-15.text-center a span").joinToString { it.text() }
-            status = SAnime.COMPLETED
+            status = if (document.location().contains("pelicula/")) SAnime.COMPLETED else SAnime.UNKNOWN
         }
     }
 
@@ -398,6 +395,22 @@ open class Pelisplushd(override val name: String, override val baseUrl: String) 
     private fun Array<String>.any(url: String): Boolean = this.any { url.contains(it, ignoreCase = true) }
 
     infix fun <A, B> Pair<A, B>.to(c: String): Triple<A, B, String> = Triple(this.first, this.second, c)
+
+    private fun Element.getImageUrl(): String? {
+        return when {
+            isValidUrl("data-src") -> attr("abs:data-src")
+            isValidUrl("data-lazy-src") -> attr("abs:data-lazy-src")
+            isValidUrl("data-cfsrc") -> attr("abs:data-cfsrc")
+            isValidUrl("srcset") -> attr("abs:srcset").substringBefore(" ")
+            isValidUrl("src") -> attr("abs:src")
+            else -> ""
+        }
+    }
+
+    private fun Element.isValidUrl(attrName: String): Boolean {
+        if (!hasAttr(attrName)) return false
+        return !attr(attrName).contains("data:image/")
+    }
 
     fun fetchUrls(text: String?): List<String> {
         if (text.isNullOrEmpty()) {
